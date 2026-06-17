@@ -1,5 +1,5 @@
 // sw.js - 서현관전자기기관리v1 Service Worker
-const CACHE_NAME = 'seohyeon-device-v1';
+const CACHE_NAME = 'seohyeon-device-v2';
 const ASSETS = [
   './index.html',
   './manifest.json',
