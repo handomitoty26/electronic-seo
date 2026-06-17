@@ -14,6 +14,7 @@
     <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
     <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root{
     --bg:#eef1f5; --panel:#ffffff; --ink:#2c3e50; --muted:#7f8c8d;
@@ -627,11 +628,30 @@ function openMenu(){
      </div>
      <div class="secbox" style="border-color:#f8c471; background:#fdf6ec;">
        <div class="st" style="color:var(--amber-d);">🛟 백업 / 복원</div>
-       <div style="font-size:12px;color:var(--muted);margin-bottom:9px;">명단·기기보유설정·모든 기록을 파일 하나로 저장/복원합니다. 기기 변경이나 초기화에 대비해 가끔 백업해 두세요.</div>
-       <button class="pbtn green" onclick="exportFullBackup()">💾 백업 (파일로 저장)</button>
-       <button class="pbtn purple" onclick="$('fBackup').click()">📂 복원 (파일 불러오기)</button>
+       <div style="font-size:12px;color:var(--muted);margin-bottom:9px;">명단·기기보유설정·모든 기록을 파일 하나로 저장/복원합니다. 기기 변경·초기화에 대비해 자주 백업하세요.</div>
+       <button class="pbtn green" onclick="exportFullBackup()">💾 전체 백업 내보내기 (JSON 파일)</button>
+       <button class="pbtn purple" onclick="$('fBackup').click()">📂 백업 복원 (JSON 불러오기)</button>
+       <button class="pbtn blue" onclick="exportRecordsExcel()">📊 엑셀로 내보내기 (기록·미제출)</button>
+     </div>
+     <div class="secbox" style="border-color:#bcd6ef; background:#f3f8fd;">
+       <div class="st" style="color:var(--blue);">☁️ 구글 드라이브 자동 백업</div>
+       <div class="note" id="gd-status" style="margin-bottom:9px;">클라이언트 ID 미등록</div>
+       <button class="pbtn" style="background:#1a73e8;" onclick="driveBackupNow(true)">☁️ 지금 드라이브로 백업</button>
+       <button class="pbtn gray" onclick="toggleDriveSettings()"><span id="gd-setting-ico">⚙️</span> <span id="gd-setting-lbl">드라이브 연결 설정 열기</span></button>
+       <div id="gd-settings-panel" style="display:none;margin-top:8px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px;">
+         <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5;">📁 백업 폴더 <b>${gdriveFolder()}</b> 안에 <b>최신.json</b>(항상 최신) + <b>날짜별 1개</b>가 저장되고, 보관일수가 지난 파일은 자동 삭제됩니다.</div>
+         <label style="font-size:12px;font-weight:800;">OAuth 클라이언트 ID</label>
+         <input id="gd-clientid" placeholder="xxxx.apps.googleusercontent.com" oninput="saveDriveClientId()" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:8px;margin:4px 0 9px;font-size:13px;">
+         <label style="font-size:12px;font-weight:800;">날짜별 파일 보관 일수</label>
+         <select id="gd-keepdays" onchange="saveDriveKeepDays()" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:8px;margin:4px 0 9px;font-size:13px;">
+           <option value="7">7일</option><option value="14">14일</option><option value="30" selected>30일</option><option value="60">60일</option>
+         </select>
+         <button class="pbtn" style="background:#1a73e8;" onclick="driveConnect()">🔗 구글 연결 (최초 1회 · 로그인+권한 허용)</button>
+         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:800;margin-top:2px;"><input type="checkbox" id="gd-auto" onchange="toggleDriveAuto()" style="width:20px;height:20px;"> 앱을 켤 때 자동으로 드라이브에 백업</label>
+       </div>
      </div>`;
   openModal('☰ 메뉴', body, `<button class="pbtn gray" onclick="closeModal()">닫기</button>`);
+  try{ renderDriveStatus(); }catch(e){}
 }
 
 // 전체화면
@@ -659,12 +679,7 @@ function openHistory(){
 
 // 전체 백업(JSON)
 async function exportFullBackup(){
-  const history={}, checks={}, absents={}, loglinked={};
-  Object.keys(localStorage).filter(k=>k.startsWith(PFX+'history_')).forEach(k=> history[k.replace(PFX+'history_','')]=JSON.parse(localStorage.getItem(k)));
-  Object.keys(localStorage).filter(k=>k.startsWith(PFX+'check_')).forEach(k=> checks[k.replace(PFX+'check_','')]=JSON.parse(localStorage.getItem(k)));
-  Object.keys(localStorage).filter(k=>k.startsWith(PFX+'absent_')).forEach(k=> absents[k.replace(PFX+'absent_','')]=JSON.parse(localStorage.getItem(k)));
-  Object.keys(localStorage).filter(k=>k.startsWith(PFX+'loglinked_')).forEach(k=> loglinked[k.replace(PFX+'loglinked_','')]=localStorage.getItem(k));
-  const data={type:'devck-fullbackup', ver:1, savedAt:new Date().toISOString(), roster, ownership, history, checks, absents, loglinked};
+  const data=buildBackupData();
   const blob=new Blob([JSON.stringify(data)],{type:'application/json'});
   const fn=`여학생_전자기기체크_백업_${todayStr()}.json`;
   let file=null; try{ file=new File([blob],fn,{type:'application/json'}); }catch(e){}
@@ -758,6 +773,173 @@ async function saveBlob(blob, fileName, kind){
 function openModal(title, body, foot){ $('mTitle').innerHTML=title; $('mBody').innerHTML=body; $('mFoot').innerHTML=foot||''; $('modal').classList.add('show'); }
 function closeModal(){ $('modal').classList.remove('show'); }
 $('modal').addEventListener('click', e=>{ if(e.target===$('modal')) closeModal(); });
+
+// ════════════════════════════════════════════════
+//  엑셀 내보내기 (기록·미제출)
+// ════════════════════════════════════════════════
+async function exportRecordsExcel(){
+  const keys=Object.keys(localStorage).filter(k=>k.startsWith(PFX+'history_')).sort();
+  if(keys.length===0){ alert('저장된 기록이 없습니다.\n체크를 진행하면 자동으로 기록이 쌓입니다.'); return; }
+  const sum=[['일자','총원','제외','대상기기','제출','미제출','미제출인원','핸드폰','태블릿','노트북']];
+  const det=[['일자','학년','학번','이름','호실','미제출기기']];
+  keys.forEach(k=>{ const r=JSON.parse(localStorage.getItem(k));
+    sum.push([r.date,r.total,r.out,r.target,r.done,r.miss,r.missPpl,r.phone,r.tablet,r.laptop]);
+    (r.detail||[]).forEach(m=> det.push([r.date,m.g+'학년',m.id,m.name,m.room,m.devs])); });
+  const wb=XLSX.utils.book_new();
+  const ws1=XLSX.utils.aoa_to_sheet(sum); ws1['!cols']=[{wch:12},{wch:6},{wch:6},{wch:8},{wch:6},{wch:7},{wch:9},{wch:7},{wch:7},{wch:7}];
+  const ws2=XLSX.utils.aoa_to_sheet(det); ws2['!cols']=[{wch:12},{wch:8},{wch:8},{wch:12},{wch:8},{wch:24}];
+  XLSX.utils.book_append_sheet(wb,ws1,'일별요약'); XLSX.utils.book_append_sheet(wb,ws2,'미제출상세');
+  const out=XLSX.write(wb,{bookType:'xlsx',type:'array'});
+  const blob=new Blob([out],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  const fn=(PFX==='devck_f_'?'서현관':'태하관')+'_전자기기기록_'+todayStr()+'.xlsx';
+  const r=await saveBlob(blob,fn,'xlsx'); if(r.aborted) return;
+  alert(r.success?('엑셀 저장 완료\n파일명: '+(r.savedName||fn)):'저장 실패');
+}
+
+// ════════════════════════════════════════════════
+//  백업 데이터 빌더 (파일/드라이브 공용)
+// ════════════════════════════════════════════════
+function buildBackupData(){
+  const history={}, checks={}, absents={}, loglinked={};
+  Object.keys(localStorage).filter(k=>k.startsWith(PFX+'history_')).forEach(k=> history[k.replace(PFX+'history_','')]=JSON.parse(localStorage.getItem(k)));
+  Object.keys(localStorage).filter(k=>k.startsWith(PFX+'check_')).forEach(k=> checks[k.replace(PFX+'check_','')]=JSON.parse(localStorage.getItem(k)));
+  Object.keys(localStorage).filter(k=>k.startsWith(PFX+'absent_')).forEach(k=> absents[k.replace(PFX+'absent_','')]=JSON.parse(localStorage.getItem(k)));
+  Object.keys(localStorage).filter(k=>k.startsWith(PFX+'loglinked_')).forEach(k=> loglinked[k.replace(PFX+'loglinked_','')]=localStorage.getItem(k));
+  return {type:'devck-fullbackup', ver:1, savedAt:new Date().toISOString(), roster, ownership, history, checks, absents, loglinked};
+}
+
+// ════════════════════════════════════════════════
+//  구글 드라이브 자동 백업 (GIS 토큰 모델 · drive.file)
+// ════════════════════════════════════════════════
+const GDRIVE_SCOPE="https://www.googleapis.com/auth/drive.file";
+function gdriveFolder(){ return (PFX==='devck_f_'?'서현관':'태하관')+' 전자기기_백업'; }
+let gdCfg=null, gTokenClient=null, gAccessToken="", gTokenExp=0, gTokenCb=null;
+function gd(){ if(!gdCfg){ try{ gdCfg=JSON.parse(localStorage.getItem(PFX+'gdrive'))||{}; }catch(e){ gdCfg={}; } } return gdCfg; }
+function saveGd(){ try{ localStorage.setItem(PFX+'gdrive', JSON.stringify(gd())); }catch(e){} }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c];}); }
+function gisReady(){ return typeof google!=="undefined" && google.accounts && google.accounts.oauth2; }
+function gInitClient(){
+  const cfg=gd(); if(!cfg.clientId){ toast('클라이언트 ID를 입력하세요','warn'); return false; }
+  if(!gisReady()){ toast('구글 모듈 로딩 실패(인터넷 확인)','bad'); return false; }
+  if(!gTokenClient){
+    gTokenClient=google.accounts.oauth2.initTokenClient({
+      client_id:cfg.clientId, scope:GDRIVE_SCOPE,
+      callback:function(resp){ if(resp&&resp.access_token){ gAccessToken=resp.access_token; gTokenExp=Date.now()+(resp.expires_in?resp.expires_in*1000:3500000); if(gTokenCb){var cb=gTokenCb;gTokenCb=null;cb(true);} }
+        else { if(gTokenCb){var cb=gTokenCb;gTokenCb=null;cb(false);} } },
+      error_callback:function(){ if(gTokenCb){var cb=gTokenCb;gTokenCb=null;cb(false);} }
+    });
+  }
+  return true;
+}
+function gGetToken(interactive){
+  return new Promise(function(res){
+    if(gAccessToken && Date.now()<gTokenExp-60000) return res(true);
+    if(!gInitClient()) return res(false);
+    gTokenCb=res;
+    try{ gTokenClient.requestAccessToken({prompt: interactive?"consent":""}); }
+    catch(e){ gTokenCb=null; res(false); }
+  });
+}
+async function gFetch(url,opts){ opts=opts||{}; opts.headers=Object.assign({Authorization:"Bearer "+gAccessToken},opts.headers||{});
+  const r=await fetch(url,opts); if(r.status===401){gAccessToken="";throw new Error("auth");} return r; }
+async function gEnsureFolder(){
+  const cfg=gd(); const fname=gdriveFolder();
+  if(cfg.folderId && cfg.folderName===fname){
+    try{ const r=await gFetch('https://www.googleapis.com/drive/v3/files/'+cfg.folderId+'?fields=id,trashed');
+      if(r.ok){ const j=await r.json(); if(j.id&&!j.trashed) return cfg.folderId; } }catch(e){}
+  }
+  const q=encodeURIComponent("name='"+fname+"' and mimeType='application/vnd.google-apps.folder' and trashed=false");
+  let r=await gFetch('https://www.googleapis.com/drive/v3/files?q='+q+'&fields=files(id,name)');
+  let j=await r.json();
+  if(j.files&&j.files.length){ cfg.folderId=j.files[0].id; cfg.folderName=fname; saveGd(); return cfg.folderId; }
+  r=await gFetch('https://www.googleapis.com/drive/v3/files?fields=id',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:fname,mimeType:'application/vnd.google-apps.folder'})});
+  j=await r.json(); cfg.folderId=j.id; cfg.folderName=fname; saveGd(); return cfg.folderId;
+}
+async function gFindFile(name,folderId){
+  const q=encodeURIComponent("name='"+name+"' and '"+folderId+"' in parents and trashed=false");
+  const r=await gFetch('https://www.googleapis.com/drive/v3/files?q='+q+'&fields=files(id,name)');
+  const j=await r.json(); return (j.files&&j.files.length)?j.files[0]:null;
+}
+async function gPutFile(name,jsonStr,folderId,existingId){
+  const form=new FormData();
+  const meta=existingId?{name:name}:{name:name,parents:[folderId]};
+  form.append("metadata",new Blob([JSON.stringify(meta)],{type:"application/json"}));
+  form.append("file",new Blob([jsonStr],{type:"application/json"}));
+  const url=existingId
+    ?'https://www.googleapis.com/upload/drive/v3/files/'+existingId+'?uploadType=multipart&fields=id,name'
+    :'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name';
+  const r=await gFetch(url,{method:existingId?"PATCH":"POST",body:form});
+  if(!r.ok) throw new Error("upload "+r.status);
+  return await r.json();
+}
+async function gCleanOld(folderId,keepDays){
+  try{
+    const q=encodeURIComponent("'"+folderId+"' in parents and trashed=false");
+    const r=await gFetch('https://www.googleapis.com/drive/v3/files?q='+q+'&fields=files(id,name,createdTime)&orderBy=createdTime');
+    const j=await r.json(); if(!j.files) return;
+    const cutoff=Date.now()-(keepDays||30)*86400000;
+    for(const f of j.files){ if(f.name==="최신.json") continue;
+      if(new Date(f.createdTime).getTime()<cutoff){ try{ await gFetch('https://www.googleapis.com/drive/v3/files/'+f.id,{method:'DELETE'}); }catch(e){} } }
+  }catch(e){}
+}
+async function gUploadBackup(){
+  const folderId=await gEnsureFolder();
+  const jsonStr=JSON.stringify(buildBackupData());
+  const latest=await gFindFile("최신.json",folderId);
+  await gPutFile("최신.json",jsonStr,folderId,latest?latest.id:null);
+  const dayName=todayStr()+".json";
+  const dayFile=await gFindFile(dayName,folderId);
+  const uploaded=await gPutFile(dayName,jsonStr,folderId,dayFile?dayFile.id:null);
+  gCleanOld(folderId, gd().keepDays||30);
+  return uploaded;
+}
+async function driveConnect(){
+  if(!gInitClient()) return;
+  toast('구글 연결 중...','ok');
+  const ok=await gGetToken(true);
+  if(!ok){ toast('구글 연결 취소/실패','bad'); return; }
+  try{ await gEnsureFolder(); renderDriveStatus(); toast('구글 드라이브 연결됨','ok'); }
+  catch(e){ toast('폴더 준비 실패 — 권한 확인','bad'); }
+}
+async function driveBackupNow(interactive){
+  const cfg=gd(); if(!cfg.clientId){ toast('클라이언트 ID를 입력하세요','warn'); return; }
+  const ok=await gGetToken(interactive!==false);
+  if(!ok){ if(interactive!==false) toast('구글 인증 필요 — [구글 연결] 먼저','warn'); return; }
+  try{ const f=await gUploadBackup(); renderDriveStatus(f.name); if(interactive!==false) toast('드라이브 백업 완료','ok'); }
+  catch(e){ if(interactive!==false) toast('업로드 실패 — 연결/권한 확인','bad'); }
+}
+function toggleDriveSettings(){
+  const p=document.getElementById('gd-settings-panel'), lbl=document.getElementById('gd-setting-lbl'), ico=document.getElementById('gd-setting-ico');
+  if(!p) return; const show=p.style.display==='none';
+  p.style.display=show?'block':'none';
+  if(lbl) lbl.textContent=show?'드라이브 연결 설정 닫기':'드라이브 연결 설정 열기';
+  if(ico) ico.textContent=show?'🔼':'⚙️';
+}
+function saveDriveClientId(){ gd().clientId=document.getElementById('gd-clientid').value.trim(); saveGd(); gTokenClient=null; renderDriveStatus(); }
+function toggleDriveAuto(){ gd().auto=document.getElementById('gd-auto').checked; saveGd(); renderDriveStatus(); }
+function saveDriveKeepDays(){ gd().keepDays=+document.getElementById('gd-keepdays').value||30; saveGd(); }
+function renderDriveStatus(lastName){
+  const cfg=gd(), el=document.getElementById('gd-status'); if(!el) return;
+  let s=cfg.clientId?'✅ 클라이언트 ID 등록됨':'❌ 클라이언트 ID 미등록';
+  s+=cfg.folderId?(' · 📁 폴더 연결됨'):' · 📁 폴더 미연결';
+  s+=cfg.auto?' · 🔄 자동 ON':' · 자동 OFF';
+  s+=' · 보관 <b>'+(cfg.keepDays||30)+'일</b>';
+  if(lastName) s+='<br>🕒 최근 업로드: <b>'+esc(lastName)+'</b>';
+  el.innerHTML=s;
+  const a=document.getElementById('gd-auto'); if(a) a.checked=!!cfg.auto;
+  const c=document.getElementById('gd-clientid'); if(c&&!c.value) c.value=cfg.clientId||'';
+  const k=document.getElementById('gd-keepdays'); if(k) k.value=String(cfg.keepDays||30);
+}
+// 앱 켤 때 자동 드라이브 백업 (자동 ON + 클라이언트 ID + 이전 인증 있을 때만 조용히)
+(function autoDriveBackup(){
+  const cfg=gd(); if(!cfg.auto||!cfg.clientId) return;
+  let tries=0;
+  const t=setInterval(function(){ tries++;
+    if(gisReady()){ clearInterval(t); setTimeout(function(){ driveBackupNow(false); },1500); }
+    else if(tries>20) clearInterval(t);
+  },500);
+})();
+
 </script>
 </body>
 </html>
